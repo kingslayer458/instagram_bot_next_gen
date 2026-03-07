@@ -6,11 +6,17 @@ Validates all env vars at startup with clear error messages.
 from __future__ import annotations
 
 import enum
+import os
 # from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
+
+# Load .env into os.environ BEFORE Settings is constructed,
+# so PROXY_1..PROXY_N vars are visible to the validator.
+load_dotenv(override=False)
 
 # # Resolve .env relative to this package directory (not cwd)
 # _ENV_FILE = Path(__file__).resolve().parent / ".env"
@@ -72,6 +78,11 @@ class Settings(BaseSettings):
     # ── Persistence ──────────────────────────────────────────────────────
     database_url: Optional[str] = None
 
+    # ── Proxy rotation ───────────────────────────────────────────────────
+    proxy_urls: list[str] = Field(default_factory=list, description="Comma-separated proxy URLs (http://user:pass@host:port)")
+    proxy_rotation_interval: float = Field(10.0, ge=1.0, description="Seconds before rotating to next proxy")
+    proxy_enabled: bool = Field(False, description="Enable proxy rotation for Steam scraping")
+
     # ── Rate-limit tuning ────────────────────────────────────────────────
     steam_page_delay: float = Field(15.0, ge=1.0, description="Seconds between Steam page fetches")
     steam_detail_delay: float = Field(8.0, ge=1.0, description="Seconds between screenshot detail fetches")
@@ -86,6 +97,24 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [s.strip() for s in v.split(",") if s.strip()]
         return v
+
+    @field_validator("proxy_urls", mode="before")
+    @classmethod
+    def parse_proxy_urls(cls, v):
+        urls: list[str] = []
+        # Collect from PROXY_URLS (comma-separated)
+        if isinstance(v, str) and v.strip():
+            urls.extend(s.strip() for s in v.split(",") if s.strip())
+        elif isinstance(v, list):
+            urls.extend(v)
+        # Also collect numbered PROXY_1 .. PROXY_50 env vars
+        for i in range(1, 51):
+            val = os.environ.get(f"PROXY_{i}", "").strip()
+            if val:
+                urls.append(val)
+            elif i > 10 and not val:
+                break  # stop scanning after a gap past 10
+        return urls
 
     def get_active_ai_key(self) -> Optional[str]:
         """Return the API key for the currently selected provider."""

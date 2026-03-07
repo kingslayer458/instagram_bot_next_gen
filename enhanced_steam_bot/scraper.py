@@ -21,6 +21,89 @@ from .config import Settings
 
 logger = structlog.get_logger()
 
+
+# ── Proxy rotator ────────────────────────────────────────────────────────
+
+class ProxyRotator:
+    """Thread-safe proxy rotator that cycles IPs on a time interval.
+
+    - Each call to ``get()`` returns the current proxy URL.
+    - After ``rotation_interval`` seconds the pointer advances to the next proxy.
+    - Workers share a single rotator so the whole bot appears to change IP together.
+    - If no proxies are configured, ``get()`` returns ``None`` (direct connection).
+    """
+
+    def __init__(self, proxy_urls: list[str], rotation_interval: float = 10.0):
+        self._proxies: list[str] = list(proxy_urls)
+        self._interval = rotation_interval
+        self._index = 0
+        self._last_rotate = time.monotonic()
+        self._lock = asyncio.Lock()
+        self._enabled = bool(self._proxies)
+
+        if self._enabled:
+            logger.info("proxy.init",
+                        pool_size=len(self._proxies),
+                        rotate_every=f"{self._interval}s")
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    async def get(self) -> Optional[str]:
+        """Return current proxy URL, rotating if interval elapsed."""
+        if not self._enabled:
+            return None
+
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_rotate
+            if elapsed >= self._interval:
+                steps = int(elapsed // self._interval)
+                old_idx = self._index
+                self._index = (self._index + steps) % len(self._proxies)
+                self._last_rotate = now
+                if self._index != old_idx:
+                    logger.info("proxy.rotated",
+                                from_idx=old_idx, to_idx=self._index,
+                                proxy=self._mask(self._proxies[self._index]),
+                                elapsed=f"{elapsed:.1f}s")
+            return self._proxies[self._index]
+
+    async def mark_bad(self, proxy_url: str) -> None:
+        """Mark a proxy as bad — rotate away from it immediately."""
+        if not self._enabled:
+            return
+        async with self._lock:
+            if self._proxies[self._index] == proxy_url and len(self._proxies) > 1:
+                old = self._index
+                self._index = (self._index + 1) % len(self._proxies)
+                self._last_rotate = time.monotonic()
+                logger.warning("proxy.marked_bad",
+                               from_idx=old, to_idx=self._index,
+                               bad_proxy=self._mask(proxy_url))
+
+    def status(self) -> dict:
+        """Return proxy pool status for health endpoint."""
+        if not self._enabled:
+            return {"enabled": False}
+        return {
+            "enabled": True,
+            "pool_size": len(self._proxies),
+            "current_index": self._index,
+            "current_proxy": self._mask(self._proxies[self._index]),
+            "rotate_interval": self._interval,
+        }
+
+    @staticmethod
+    def _mask(url: str) -> str:
+        """Mask credentials in proxy URL for safe logging."""
+        # http://user:pass@host:port → http://***@host:port
+        m = re.match(r"(https?://)([^@]+)@(.+)", url)
+        if m:
+            return f"{m.group(1)}***@{m.group(3)}"
+        return url
+
 # ── Data models ──────────────────────────────────────────────────────────
 
 @dataclass
@@ -195,6 +278,10 @@ class SteamScraper:
         self.settings = settings
         self._cache: dict[str, tuple[float, list[Screenshot]]] = {}  # steam_id -> (ts, screenshots)
         self._cache_ttl = 3600  # 1 hour
+        self._proxy = ProxyRotator(
+            settings.proxy_urls,
+            settings.proxy_rotation_interval,
+        ) if settings.proxy_enabled else ProxyRotator([], 10.0)
 
     # ── Public API ───────────────────────────────────────────────────────
 
@@ -245,7 +332,8 @@ class SteamScraper:
         async with aiohttp.ClientSession(headers=HEADERS) as session:
             # Initial profile check
             try:
-                async with session.get(base) as resp:
+                proxy = await self._proxy.get()
+                async with session.get(base, proxy=proxy) as resp:
                     if resp.status != 200:
                         logger.warning("steam.profile_error", steam_id=steam_id, status=resp.status)
                         return urls
@@ -272,14 +360,22 @@ class SteamScraper:
                     page_url = f"{base}{vt}{sep}p={page}"
 
                     try:
-                        async with session.get(page_url) as resp:
+                        proxy = await self._proxy.get()
+                        async with session.get(page_url, proxy=proxy) as resp:
                             if resp.status == 429 or resp.status == 403:
                                 logger.warning("steam.rate_limited", status=resp.status)
+                                if proxy:
+                                    await self._proxy.mark_bad(proxy)
                                 await asyncio.sleep(30 * 60)
                                 continue
                             if resp.status != 200:
                                 continue
                             html = await resp.text()
+                    except aiohttp.ClientProxyConnectionError as e:
+                        logger.warning("steam.proxy_error", proxy=ProxyRotator._mask(proxy) if proxy else "direct", error=str(e))
+                        if proxy:
+                            await self._proxy.mark_bad(proxy)
+                        continue
                     except Exception as e:
                         logger.error("steam.page_error", url=page_url, error=str(e))
                         continue
@@ -377,8 +473,11 @@ class SteamScraper:
                     jitter = random.uniform(0, delay * 0.4)
                     await asyncio.sleep(delay * 0.3 + jitter + worker_id * 0.5)
 
+                    # Get current proxy (rotates automatically every N seconds)
+                    proxy = await self._proxy.get()
+
                     # Fetch
-                    ss = await self._fetch_detail(session, url, steam_id, worker_id)
+                    ss = await self._fetch_detail(session, url, steam_id, worker_id, proxy)
 
                     # Record result
                     async with results_lock:
@@ -420,21 +519,38 @@ class SteamScraper:
         url: str,
         steam_id: str,
         worker_id: int,
+        proxy: Optional[str] = None,
     ) -> Optional[Screenshot]:
         """Fetch a single screenshot detail page with simple retry on 429."""
         for attempt in range(self.settings.max_retries):
             try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                current_proxy = proxy or await self._proxy.get()
+                async with session.get(url, proxy=current_proxy,
+                                       timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status == 429 or resp.status == 403:
                         wait = 30 + random.uniform(5, 15) * (attempt + 1)
                         logger.warning("steam.worker_429", worker=worker_id,
-                                       wait=f"{wait:.0f}s", attempt=attempt + 1)
+                                       wait=f"{wait:.0f}s", attempt=attempt + 1,
+                                       proxy=ProxyRotator._mask(current_proxy) if current_proxy else "direct")
+                        # Rotate away from the blocked proxy
+                        if current_proxy:
+                            await self._proxy.mark_bad(current_proxy)
+                            proxy = await self._proxy.get()  # use new proxy on retry
                         await asyncio.sleep(wait)
                         continue
                     if resp.status != 200:
                         return None
                     html = await resp.text()
                 break
+            except aiohttp.ClientProxyConnectionError as e:
+                logger.warning("steam.proxy_conn_error", worker=worker_id,
+                               proxy=ProxyRotator._mask(current_proxy) if current_proxy else "direct",
+                               error=str(e), attempt=attempt + 1)
+                if current_proxy:
+                    await self._proxy.mark_bad(current_proxy)
+                    proxy = await self._proxy.get()
+                await asyncio.sleep(2 ** attempt)
+                continue
             except asyncio.TimeoutError:
                 logger.warning("steam.worker_timeout", worker=worker_id,
                                url=url[:80], attempt=attempt + 1)

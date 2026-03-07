@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from datetime import datetime
 
 import structlog
@@ -53,9 +54,22 @@ async def _run_health_server(port: int, bot: "SteamInstagramBot"):
     from aiohttp import web
 
     async def health_handler(request):
+        elapsed = time.monotonic() - bot._start_time
+        days, rem = divmod(int(elapsed), 86400)
+        hours, rem = divmod(rem, 3600)
+        minutes, seconds = divmod(rem, 60)
+        parts = []
+        if days:
+            parts.append(f"{days}d")
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes:
+            parts.append(f"{minutes}m")
+        parts.append(f"{seconds}s")
         return web.json_response({
             "status": "healthy",
             "timestamp": datetime.utcnow().isoformat(),
+            "uptime": " ".join(parts),
             "bot_status": bot.get_status(),
         })
 
@@ -75,6 +89,7 @@ class SteamInstagramBot:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        self._start_time = time.monotonic()
         self.persistence = PersistenceManager(database_url=settings.database_url)
         self.scraper = SteamScraper(settings)
         self.publisher = InstagramPublisher(settings)
@@ -89,7 +104,7 @@ class SteamInstagramBot:
                     vision=self.settings.enable_vision_analysis)
 
     def get_status(self) -> dict:
-        return {
+        status = {
             "posted_count": len(self.persistence.posted_screenshots),
             "caption_patterns": len(self.persistence.caption_history),
             "steam_users": len(self.settings.steam_user_ids),
@@ -101,6 +116,8 @@ class SteamInstagramBot:
             "mood_detection": self.settings.enable_mood_detection,
             "caption_variety": self.settings.caption_variety.value,
         }
+        status["proxy"] = self.scraper._proxy.status()
+        return status
 
     # ── Core workflow ────────────────────────────────────────────────────
 
