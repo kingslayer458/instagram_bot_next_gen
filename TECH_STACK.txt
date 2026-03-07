@@ -1,0 +1,72 @@
+═══════════════════════════════════════════════════════════════
+  Enhanced Steam → Instagram Bot – Tech Stack
+═══════════════════════════════════════════════════════════════
+
+── Language ───────────────────────────────────────────────────
+  Python 3.10+             Core language (async/await)
+
+── Core Framework ─────────────────────────────────────────────
+  asyncio                  Async event loop & concurrency
+  aiohttp                  Async HTTP client/server (scraping + health endpoint)
+  aiohttp-socks            Proxy support (HTTP/SOCKS4/SOCKS5) for aiohttp
+
+── Web Scraping ───────────────────────────────────────────────
+  aiohttp                  Fetches Steam Community pages
+  re (stdlib)              Regex-based HTML parsing (no BeautifulSoup needed)
+  html (stdlib)            HTML entity unescaping
+
+── AI / Vision ────────────────────────────────────────────────
+  Google Gemini 2.5 Flash  Primary AI – vision analysis + caption generation
+  google-generativeai      Gemini Python SDK (optional, REST used directly)
+  openai                   OpenAI GPT fallback provider
+  anthropic                Anthropic Claude fallback provider
+
+── Instagram Publishing ───────────────────────────────────────
+  Meta Graph API v21.0     Instagram Business content publishing
+  httpx                    Async HTTP client for Graph API calls
+
+── Image Processing ───────────────────────────────────────────
+  Pillow (PIL)             Image validation, format detection, resizing
+
+── Configuration ──────────────────────────────────────────────
+  pydantic                 Data validation & type safety
+  pydantic-settings        Environment variable loading + .env parsing
+  python-dotenv            .env file pre-loading (for numbered PROXY_N vars)
+
+── Scheduling ─────────────────────────────────────────────────
+  APScheduler              Cron-based job scheduling for auto-posting
+
+── Persistence ────────────────────────────────────────────────
+  JSON files               Default storage (posted history, caption patterns)
+  asyncpg                  PostgreSQL async driver (optional upgrade)
+
+── Networking / Resilience ────────────────────────────────────
+  aiohttp-socks            Residential proxy rotation (10 proxies, 10s interval)
+  tenacity                 Retry logic with exponential backoff
+
+── Logging & CLI ──────────────────────────────────────────────
+  structlog                Structured JSON-style logging
+  rich                     Beautiful terminal output (tables, panels, colors)
+
+── Deployment ─────────────────────────────────────────────────
+  Docker                   Containerization (python:3.10-slim base)
+  docker-compose           Orchestration, env loading, health checks
+  Git + GitHub             Version control
+
+── Architecture ───────────────────────────────────────────────
+  bot.py                   Orchestrator – CLI, scheduling, health server
+  scraper.py               Steam scraper – parallel workers, proxy rotation
+  caption_engine.py        AI pipeline – vision → ranking → caption generation
+  publisher.py             Instagram publisher – 3-strategy upload
+  persistence.py           Storage – JSON files or PostgreSQL
+  config.py                Config – pydantic-settings + env validation
+
+── Key Design Patterns ────────────────────────────────────────
+  Worker Pool              5 parallel async workers for detail fetching
+  Proxy Rotation           Time-based IP rotation every 10 seconds
+  Candidate Ranking        Generate N captions, score & pick best
+  Vision Pipeline          Image → Gemini vision → mood/colors/scene → caption
+  Fallback Chain           AI caption → static template → error handling
+  Adaptive Retry           429/403 detection → mark bad proxy → rotate → retry
+
+═══════════════════════════════════════════════════════════════
