@@ -17,10 +17,11 @@ COPY enhanced_steam_bot/ ./enhanced_steam_bot/
 # Persist data outside the container
 VOLUME /app/data
 
-# Health check endpoint
-EXPOSE 3000
+# Health check endpoint (port comes from PORT env var, default 3000)
+ARG PORT=3000
+EXPOSE ${PORT}
 HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:3000/health')" || exit 1
+    CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\",3000)}/health')" || exit 1
 
 ENTRYPOINT ["python", "-m", "enhanced_steam_bot"]
 CMD ["run"]
