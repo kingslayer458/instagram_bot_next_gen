@@ -6,15 +6,14 @@ Validates all env vars at startup with clear error messages.
 from __future__ import annotations
 
 import enum
-from pathlib import Path
+# from pathlib import Path
 from typing import Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
-# Resolve .env relative to this package directory (not cwd)
-_ENV_FILE = Path(__file__).resolve().parent / ".env"
-
+# # Resolve .env relative to this package directory (not cwd)
+# _ENV_FILE = Path(__file__).resolve().parent / ".env"
 
 class AIProvider(str, enum.Enum):
     GEMINI = "gemini"
@@ -31,7 +30,7 @@ class CaptionVariety(str, enum.Enum):
 class Settings(BaseSettings):
     """All configuration loaded from environment variables or .env file."""
 
-    model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     # ── Instagram ────────────────────────────────────────────────────────
     instagram_access_token: str = Field(..., description="Meta Graph API long-lived token")

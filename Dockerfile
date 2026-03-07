@@ -8,7 +8,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python deps
-COPY enhanced_steam_bot/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
@@ -18,9 +18,9 @@ COPY enhanced_steam_bot/ ./enhanced_steam_bot/
 VOLUME /app/data
 
 # Health check endpoint
-EXPOSE 3000
+EXPOSE 4000
 HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:3000/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:4000/health')" || exit 1
 
 ENTRYPOINT ["python", "-m", "enhanced_steam_bot"]
 CMD ["run"]

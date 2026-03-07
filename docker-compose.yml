@@ -4,8 +4,8 @@ services:
     container_name: steam-insta-bot
     restart: unless-stopped
     env_file:
-      - ./enhanced_steam_bot/.env
+      - ./.env
     ports:
-      - "3000:3000"
+      - 4000:4000
     volumes:
       - ./data:/app/data
