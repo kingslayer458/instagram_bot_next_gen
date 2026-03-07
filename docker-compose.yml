@@ -6,6 +6,6 @@ services:
     env_file:
       - ./enhanced_steam_bot/.env
     ports:
-      - "${PORT:-3000}:${PORT:-3000}"
+      - "3000:3000"
     volumes:
       - ./data:/app/data
