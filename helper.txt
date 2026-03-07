@@ -1,3 +1,9 @@
 docker compose up -d        # start in background
 docker compose logs -f      # follow logs
 docker compose run bot post # single post
+
+docker compose run bot test  # Dry-run test
+docker compose run bot test-vision 
+docker compose run bot status
+docker compose run bot reset-history
+docker compose run bot reset-caption
