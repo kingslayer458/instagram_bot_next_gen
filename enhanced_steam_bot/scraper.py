@@ -90,8 +90,8 @@ class ProxyRotator:
         return {
             "enabled": True,
             "pool_size": len(self._proxies),
-            "current_index": self._index,
-            "current_proxy": self._mask(self._proxies[self._index]),
+            # "current_index": self._index,
+            # "current_proxy": self._mask(self._proxies[self._index]),
             "rotate_interval": self._interval,
         }
 
