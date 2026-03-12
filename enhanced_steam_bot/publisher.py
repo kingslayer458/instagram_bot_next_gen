@@ -92,6 +92,29 @@ async def upload_to_imgbb(image_path: Path, api_key: str) -> str:
             return result["data"]["url"]
 
 
+async def upload_to_catbox(image_path: Path) -> str:
+    """Upload to catbox.moe, return direct URL."""
+    logger.info("upload.catbox")
+    async with aiofiles.open(image_path, "rb") as f:
+        raw = await f.read()
+
+    async with aiohttp.ClientSession() as session:
+        data = aiohttp.FormData()
+        data.add_field("reqtype", "fileupload")
+        data.add_field("fileToUpload", raw, filename="screenshot.jpg", content_type="image/jpeg")
+        async with session.post(
+            "https://catbox.moe/user/api.php",
+            data=data,
+            timeout=aiohttp.ClientTimeout(total=60),
+        ) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"catbox.moe error: {resp.status}")
+            url = (await resp.text()).strip()
+            if not url.startswith("https://"):
+                raise RuntimeError(f"Invalid catbox.moe response: {url}")
+            return url
+
+
 async def upload_to_0x0(image_path: Path) -> str:
     """Upload to 0x0.st, return direct URL."""
     logger.info("upload.0x0")
@@ -201,12 +224,17 @@ class InstagramPublisher:
         raise RuntimeError("All Steam URL variants failed")
 
     async def _upload_to_host(self, path: Path) -> str:
-        """Try available image hosting services."""
+        """Try available image hosting services in order: ImgBB → catbox.moe → 0x0.st."""
         if self.settings.imgbb_api_key:
             try:
                 return await upload_to_imgbb(path, self.settings.imgbb_api_key)
             except Exception as e:
                 logger.warning("upload.imgbb_failed", error=str(e))
+
+        try:
+            return await upload_to_catbox(path)
+        except Exception as e:
+            logger.warning("upload.catbox_failed", error=str(e))
 
         try:
             return await upload_to_0x0(path)

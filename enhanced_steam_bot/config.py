@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     proxy_urls: list[str] = Field(default_factory=list, description="Comma-separated proxy URLs (http://user:pass@host:port)")
     proxy_rotation_interval: float = Field(10.0, ge=1.0, description="Seconds before rotating to next proxy")
     proxy_enabled: bool = Field(False, description="Enable proxy rotation for Steam scraping")
+    webshare_api_key: Optional[str] = Field(None, description="Webshare.io API key – fetches proxies dynamically (overrides PROXY_URLS)")
 
     # ── Rate-limit tuning ────────────────────────────────────────────────
     steam_page_delay: float = Field(15.0, ge=1.0, description="Seconds between Steam page fetches")
@@ -107,7 +108,7 @@ class Settings(BaseSettings):
             urls.extend(s.strip() for s in v.split(",") if s.strip())
         elif isinstance(v, list):
             urls.extend(v)
-        # Also collect numbered PROXY_1 .. PROXY_50 env vars
+        # Also collect numbered PROXY_1 .. PROXY_50 env vars (legacy fallback)
         for i in range(1, 51):
             val = os.environ.get(f"PROXY_{i}", "").strip()
             if val:

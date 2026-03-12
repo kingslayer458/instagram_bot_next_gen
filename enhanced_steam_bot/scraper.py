@@ -22,6 +22,62 @@ from .config import Settings
 logger = structlog.get_logger()
 
 
+# ── Webshare API ─────────────────────────────────────────────────────────
+
+async def fetch_webshare_proxies(api_key: str) -> list[str]:
+    """Fetch the full proxy list from the Webshare.io API.
+
+    Returns a list of ``http://user:pass@host:port`` URLs ready for aiohttp-socks.
+    Paginates automatically until all proxies are collected.
+    """
+    proxies: list[str] = []
+    url: str | None = "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=100"
+    headers = {"Authorization": f"Token {api_key}"}
+
+    async with aiohttp.ClientSession() as session:
+        while url:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise RuntimeError(f"Webshare API error {resp.status}: {text[:200]}")
+                data = await resp.json()
+
+            for entry in data.get("results", []):
+                host = entry["proxy_address"]
+                port = entry["port"]
+                user = entry["username"]
+                pwd = entry["password"]
+                proxies.append(f"http://{user}:{pwd}@{host}:{port}")
+
+            url = data.get("next")  # paginated — None when done
+
+    logger.info("webshare.fetched", proxy_count=len(proxies))
+    return proxies
+
+
+# ── Proxy helpers ────────────────────────────────────────────────────────
+
+def _proxy_kwargs(proxy_url: Optional[str]) -> dict:
+    """Build aiohttp-compatible proxy kwargs with explicit auth extraction.
+
+    aiohttp sometimes fails to extract credentials from the proxy URL,
+    resulting in 407 Proxy Authentication Required.  This helper parses
+    them out and returns ``{proxy: ..., proxy_auth: ...}`` ready to
+    unpack into ``session.get(**_proxy_kwargs(url))``.
+    """
+    if not proxy_url:
+        return {}
+    m = re.match(r"https?://([^:]+):([^@]+)@(.+)", proxy_url)
+    if m:
+        user, pwd, host_port = m.group(1), m.group(2), m.group(3)
+        scheme = "http://" if proxy_url.startswith("http://") else "https://"
+        return {
+            "proxy": f"{scheme}{host_port}",
+            "proxy_auth": aiohttp.BasicAuth(user, pwd),
+        }
+    return {"proxy": proxy_url}
+
+
 # ── Proxy rotator ────────────────────────────────────────────────────────
 
 class ProxyRotator:
@@ -278,15 +334,43 @@ class SteamScraper:
         self.settings = settings
         self._cache: dict[str, tuple[float, list[Screenshot]]] = {}  # steam_id -> (ts, screenshots)
         self._cache_ttl = 3600  # 1 hour
-        self._proxy = ProxyRotator(
-            settings.proxy_urls,
-            settings.proxy_rotation_interval,
-        ) if settings.proxy_enabled else ProxyRotator([], 10.0)
+        # Proxy rotator is set up lazily via _ensure_proxies()
+        self._proxy = ProxyRotator([], 10.0)
+        self._proxies_initialised = False
+
+    async def _ensure_proxies(self) -> None:
+        """Lazy one-shot proxy init: Webshare API key takes priority, then env vars."""
+        if self._proxies_initialised:
+            return
+        self._proxies_initialised = True
+
+        if not self.settings.proxy_enabled:
+            return
+
+        proxy_urls: list[str] = []
+
+        # Prefer Webshare API if a key is configured
+        if self.settings.webshare_api_key:
+            try:
+                proxy_urls = await fetch_webshare_proxies(self.settings.webshare_api_key)
+            except Exception as e:
+                logger.error("webshare.fetch_failed", error=str(e))
+
+        # Fall back to static env-var proxies if Webshare returned nothing
+        if not proxy_urls and self.settings.proxy_urls:
+            logger.info("proxy.fallback_to_env_vars", count=len(self.settings.proxy_urls))
+            proxy_urls = self.settings.proxy_urls
+
+        if proxy_urls:
+            self._proxy = ProxyRotator(proxy_urls, self.settings.proxy_rotation_interval)
+        else:
+            logger.warning("proxy.none_available")
 
     # ── Public API ───────────────────────────────────────────────────────
 
     async def fetch_all_users(self, posted: set[str]) -> list[Screenshot]:
         """Fetch screenshots from all configured Steam users, return sorted by score."""
+        await self._ensure_proxies()
         all_screenshots: list[Screenshot] = []
 
         for steam_id in self.settings.steam_user_ids:
@@ -333,7 +417,7 @@ class SteamScraper:
             # Initial profile check
             try:
                 proxy = await self._proxy.get()
-                async with session.get(base, proxy=proxy) as resp:
+                async with session.get(base, **_proxy_kwargs(proxy)) as resp:
                     if resp.status != 200:
                         logger.warning("steam.profile_error", steam_id=steam_id, status=resp.status)
                         return urls
@@ -361,7 +445,7 @@ class SteamScraper:
 
                     try:
                         proxy = await self._proxy.get()
-                        async with session.get(page_url, proxy=proxy) as resp:
+                        async with session.get(page_url, **_proxy_kwargs(proxy)) as resp:
                             if resp.status == 429 or resp.status == 403:
                                 logger.warning("steam.rate_limited", status=resp.status)
                                 if proxy:
@@ -525,7 +609,7 @@ class SteamScraper:
         for attempt in range(self.settings.max_retries):
             try:
                 current_proxy = proxy or await self._proxy.get()
-                async with session.get(url, proxy=current_proxy,
+                async with session.get(url, **_proxy_kwargs(current_proxy),
                                        timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status == 429 or resp.status == 403:
                         wait = 30 + random.uniform(5, 15) * (attempt + 1)
