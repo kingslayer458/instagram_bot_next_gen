@@ -214,7 +214,7 @@ class InstagramPublisher:
             raise RuntimeError(f"All image hosts failed. Last: {e}")
 
     async def _create_and_publish(self, image_url: str, caption: str) -> str:
-        """Two-step Instagram publish: create media container, then publish."""
+        """Two-step Instagram publish: create media container, wait for ready, then publish."""
         async with aiohttp.ClientSession() as session:
             # Step 1: Create media container
             create_url = f"{self._base}/{self.settings.instagram_page_id}/media"
@@ -229,7 +229,46 @@ class InstagramPublisher:
                     raise RuntimeError(f"Media create failed: {data['error']['message']}")
                 creation_id = data["id"]
 
-            # Step 2: Publish
+            # Step 2: Poll until the media container is ready
+            status_url = f"{self._base}/{creation_id}"
+            max_attempts = 3
+            poll_interval = 10  # seconds
+            for attempt in range(1, max_attempts + 1):
+                await asyncio.sleep(poll_interval)
+                async with session.get(
+                    status_url,
+                    params={
+                        "fields": "status_code,status",
+                        "access_token": self.settings.instagram_access_token,
+                    },
+                ) as resp:
+                    status_data = await resp.json()
+
+                status_code = status_data.get("status_code", "UNKNOWN")
+                logger.info(
+                    "publish.poll_status",
+                    creation_id=creation_id,
+                    status=status_code,
+                    attempt=attempt,
+                )
+
+                if status_code == "FINISHED":
+                    break
+                elif status_code == "ERROR":
+                    detail = status_data.get("status", "unknown error")
+                    raise RuntimeError(f"Media processing failed: {detail}")
+                elif status_code in ("IN_PROGRESS", "UNKNOWN"):
+                    if attempt == max_attempts:
+                        raise RuntimeError(
+                            f"Media container not ready after {max_attempts * poll_interval}s "
+                            f"(last status: {status_code})"
+                        )
+                    continue
+                else:
+                    if attempt == max_attempts:
+                        raise RuntimeError(f"Unexpected media status: {status_code}")
+
+            # Step 3: Publish
             publish_url = f"{self._base}/{self.settings.instagram_page_id}/media_publish"
             payload = {
                 "creation_id": creation_id,
