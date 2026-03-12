@@ -159,6 +159,7 @@ class InstagramPublisher:
     def __init__(self, settings: Settings):
         self.settings = settings
         self._base = f"https://graph.facebook.com/{self.API_VERSION}"
+        self.last_publish_method: Optional[str] = None
 
     async def publish(self, image_url: str, caption: str) -> str:
         """
@@ -169,13 +170,15 @@ class InstagramPublisher:
           3. Original URL as last resort
         """
         # Validate token first
+        self.last_publish_method = None
         await self._validate_token()
 
         # Strategy 1: Direct Steam URL tricks
         try:
             logger.info("publish.strategy1_steam_urls")
             post_id = await self._try_steam_variants(image_url, caption)
-            logger.info("publish.strategy1_success", post_id=post_id)
+            self.last_publish_method = "strategy1_steam_urls"
+            logger.info("publish.strategy1_success", post_id=post_id, method=self.last_publish_method)
             return post_id
         except Exception as e:
             logger.warning("publish.strategy1_failed", error=str(e))
@@ -185,9 +188,10 @@ class InstagramPublisher:
         try:
             logger.info("publish.strategy2_process_and_host")
             processed_path = await process_image_for_instagram(image_url)
-            hosted_url = await self._upload_to_host(processed_path)
+            hosted_url, host_method = await self._upload_to_host(processed_path)
             post_id = await self._create_and_publish(hosted_url, caption)
-            logger.info("publish.strategy2_success", post_id=post_id)
+            self.last_publish_method = f"strategy2_{host_method}"
+            logger.info("publish.strategy2_success", post_id=post_id, method=self.last_publish_method)
             return post_id
         except Exception as e:
             logger.warning("publish.strategy2_failed", error=str(e))
@@ -199,7 +203,8 @@ class InstagramPublisher:
         try:
             logger.info("publish.strategy3_original_url")
             post_id = await self._create_and_publish(image_url, caption)
-            logger.info("publish.strategy3_success", post_id=post_id)
+            self.last_publish_method = "strategy3_original_url"
+            logger.info("publish.strategy3_success", post_id=post_id, method=self.last_publish_method)
             return post_id
         except Exception as e:
             raise RuntimeError(f"All upload strategies failed. Last error: {e}")
@@ -223,21 +228,21 @@ class InstagramPublisher:
                 continue
         raise RuntimeError("All Steam URL variants failed")
 
-    async def _upload_to_host(self, path: Path) -> str:
+    async def _upload_to_host(self, path: Path) -> tuple[str, str]:
         """Try available image hosting services in order: ImgBB → catbox.moe → 0x0.st."""
         if self.settings.imgbb_api_key:
             try:
-                return await upload_to_imgbb(path, self.settings.imgbb_api_key)
+                return await upload_to_imgbb(path, self.settings.imgbb_api_key), "imgbb"
             except Exception as e:
                 logger.warning("upload.imgbb_failed", error=str(e))
 
         try:
-            return await upload_to_catbox(path)
+            return await upload_to_catbox(path), "catbox"
         except Exception as e:
             logger.warning("upload.catbox_failed", error=str(e))
 
         try:
-            return await upload_to_0x0(path)
+            return await upload_to_0x0(path), "0x0"
         except Exception as e:
             raise RuntimeError(f"All image hosts failed. Last: {e}")
 

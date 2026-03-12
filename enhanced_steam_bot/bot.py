@@ -168,7 +168,12 @@ class SteamInstagramBot:
         pattern = self._extract_pattern(caption_text)
         await self.persistence.track_caption_pattern(pattern)
 
-        logger.info("bot.posted", post_id=post_id, game=screenshot.game_name)
+        logger.info(
+            "bot.posted",
+            post_id=post_id,
+            game=screenshot.game_name,
+            method=self.publisher.last_publish_method,
+        )
         return True
 
     @staticmethod
@@ -221,7 +226,8 @@ def _print_banner():
 async def _cmd_post(bot: SteamInstagramBot):
     success = await bot.execute_posting()
     if success:
-        console.print("[green]✅ Posted successfully![/green]")
+        method = bot.publisher.last_publish_method or "unknown"
+        console.print(f"[green]Posted successfully using {method}.[/green]")
     else:
         console.print("[red]❌ No screenshots available to post.[/red]")
 
