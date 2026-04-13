@@ -9,3 +9,14 @@ services:
       - 4000:4000
     volumes:
       - ./data:/app/data
+  
+  backup:
+    image: python:3.11-alpine
+    container_name: bot-backup
+    volumes:
+      - ./data:/app/data
+      - ${HOME}/backups:/app/data_backup
+      - ./backup.py:/app/backup.py
+    working_dir: /app
+    command: python3 -u backup.py
+    restart: unless-stopped
