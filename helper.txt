@@ -1,4 +1,4 @@
-ldocker compose up -d        # start in background
+docker compose up -d        # start in background
 docker compose logs -f      # follow logs
 docker compose run bot post # single post
 
