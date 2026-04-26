@@ -1,0 +1,11 @@
+got to meta api link == https://developers.facebook.com/tools/explorer/
+
+to get instagram page id 
+
+https://graph.facebook.com/v21.0/<facebook_page_id>?fields=instagram_business_account&access_token=
+
+and to generate long lived access token 
+https://developers.facebook.com/tools/debug/accesstoken/
+
+enter the access token and debug it.. extend it
+you will get the long lived token
