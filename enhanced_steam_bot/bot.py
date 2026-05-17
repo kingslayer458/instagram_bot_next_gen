@@ -104,6 +104,7 @@ class SteamInstagramBot:
                     vision=self.settings.enable_vision_analysis)
 
     def get_status(self) -> dict:
+        proxy_configured = bool(self.settings.webshare_api_key or self.settings.proxy_urls)
         status = {
             "posted_count": len(self.persistence.posted_screenshots),
             "caption_patterns": len(self.persistence.caption_history),
@@ -115,6 +116,7 @@ class SteamInstagramBot:
             "caption_scoring": self.settings.enable_caption_scoring,
             "mood_detection": self.settings.enable_mood_detection,
             "caption_variety": self.settings.caption_variety.value,
+            "proxy_configured": proxy_configured,
         }
         status["proxy"] = self.scraper._proxy.status()
         return status
