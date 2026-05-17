@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import html as html_mod
+from dataclasses import asdict
 import random
 import re
 import time
@@ -178,6 +179,26 @@ class Screenshot:
     mood: Optional[str] = None
     dominant_colors: Optional[list[str]] = None
     scene_description: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Screenshot":
+        return cls(
+            page_url=data["page_url"],
+            image_url=data["image_url"],
+            quality_estimate=data.get("quality_estimate", "Standard Quality"),
+            title=data.get("title"),
+            game_name=data.get("game_name"),
+            steam_user=data.get("steam_user"),
+            extracted_at=data.get("extracted_at") or datetime.now(timezone.utc).isoformat(),
+            original_url=data.get("original_url"),
+            score=float(data.get("score", 0.0) or 0.0),
+            mood=data.get("mood"),
+            dominant_colors=data.get("dominant_colors"),
+            scene_description=data.get("scene_description"),
+        )
 
 
 # ── Quality scoring weights ──────────────────────────────────────────────

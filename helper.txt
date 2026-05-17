@@ -1,10 +1,19 @@
 docker compose up -d        # start in background
 docker compose logs -f      # follow logs
 docker compose run bot post # single post
+docker compose run bot post --retry-failed # retry one failed item manually
 
 docker compose run bot test  # Dry-run test
 docker compose run bot test-vision 
 docker compose run bot status
 docker compose run bot reset-history
 docker compose run bot reset-captions
+docker compose run bot reset-queue
+docker compose run bot reset-failed
 mkdir -p ~/backups
+
+Queue behavior:
+- scraped_queue.json stores screenshots already scraped from Steam.
+- failed_queue.json stores screenshots that failed during publish.
+- normal post runs consume from scraped_queue first.
+- if publish fails, the item moves into failed_queue for manual retry.

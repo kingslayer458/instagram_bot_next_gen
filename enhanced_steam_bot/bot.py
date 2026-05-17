@@ -30,7 +30,7 @@ from rich.table import Table
 
 from .config import Settings
 from .persistence import PersistenceManager
-from .scraper import SteamScraper
+from .scraper import Screenshot, SteamScraper
 from .caption_engine import CaptionEngine
 from .publisher import InstagramPublisher
 
@@ -108,6 +108,8 @@ class SteamInstagramBot:
         status = {
             "posted_count": len(self.persistence.posted_screenshots),
             "caption_patterns": len(self.persistence.caption_history),
+            "scraped_queue": len(self.persistence.scraped_queue),
+            "failed_queue": len(self.persistence.failed_queue),
             "steam_users": len(self.settings.steam_user_ids),
             "schedule": self.settings.posting_schedule,
             "ai_provider": self.settings.ai_provider.value,
@@ -124,33 +126,72 @@ class SteamInstagramBot:
     # ── Core workflow ────────────────────────────────────────────────────
 
     async def select_best_screenshot(self):
-        """Fetch from all users, return the best unposted screenshot."""
+        """Return the next screenshot from the local queue, refreshing it only when empty."""
+        cached = await self.persistence.get_cached_screenshot(self.persistence.posted_screenshots)
+        if cached:
+            best = Screenshot.from_dict(cached)
+            logger.info("bot.selected_cached",
+                        game=best.game_name or "Unknown",
+                        quality=best.quality_estimate,
+                        score=best.score)
+            return best
+
         screenshots = await self.scraper.fetch_all_users(self.persistence.posted_screenshots)
         if not screenshots:
             return None
 
-        unposted = [s for s in screenshots if not self.persistence.is_posted(s.page_url)]
-        if not unposted:
+        await self.persistence.replace_scraped_queue([s.to_dict() for s in screenshots if not self.persistence.is_posted(s.page_url)])
+        cached = await self.persistence.get_cached_screenshot(self.persistence.posted_screenshots)
+        if not cached:
             logger.warning("bot.all_posted")
             return None
 
-        # Sort by most recently extracted first (freshness), then score
-        unposted.sort(key=lambda s: s.extracted_at, reverse=True)
-        best = unposted[0]
-        logger.info("bot.selected",
+        best = Screenshot.from_dict(cached)
+        logger.info("bot.selected_refreshed",
                     game=best.game_name or "Unknown",
                     quality=best.quality_estimate,
                     score=best.score)
         return best
 
-    async def execute_posting(self) -> bool:
+    async def execute_posting(self, retry_failed: bool = False) -> bool:
         """Run a single posting cycle. Returns True on success."""
         logger.info("bot.posting_start")
 
-        screenshot = await self.select_best_screenshot()
-        if not screenshot:
-            logger.warning("bot.no_screenshots")
-            return False
+        if retry_failed:
+            cached = await self.persistence.pop_failed_screenshot(self.persistence.posted_screenshots)
+            if not cached:
+                logger.warning("bot.no_failed_screenshots")
+                return False
+            screenshot = Screenshot.from_dict(cached)
+            logger.info("bot.selected_failed",
+                        game=screenshot.game_name or "Unknown",
+                        quality=screenshot.quality_estimate,
+                        score=screenshot.score)
+        else:
+            cached = await self.persistence.pop_cached_screenshot(self.persistence.posted_screenshots)
+            if cached:
+                screenshot = Screenshot.from_dict(cached)
+                logger.info("bot.selected_cached",
+                            game=screenshot.game_name or "Unknown",
+                            quality=screenshot.quality_estimate,
+                            score=screenshot.score)
+            else:
+                screenshots = await self.scraper.fetch_all_users(self.persistence.posted_screenshots)
+                if not screenshots:
+                    logger.warning("bot.no_screenshots")
+                    return False
+
+                await self.persistence.replace_scraped_queue([s.to_dict() for s in screenshots if not self.persistence.is_posted(s.page_url)])
+                cached = await self.persistence.pop_cached_screenshot(self.persistence.posted_screenshots)
+                if not cached:
+                    logger.warning("bot.all_posted")
+                    return False
+
+                screenshot = Screenshot.from_dict(cached)
+                logger.info("bot.selected_refreshed",
+                            game=screenshot.game_name or "Unknown",
+                            quality=screenshot.quality_estimate,
+                            score=screenshot.score)
 
         # Generate caption & hashtags
         overused = self.persistence.get_overused_patterns()
@@ -163,7 +204,17 @@ class SteamInstagramBot:
                     hashtag_count=len(hashtags))
 
         # Publish
-        post_id = await self.publisher.publish(screenshot.image_url, full_caption)
+        try:
+            post_id = await self.publisher.publish(screenshot.image_url, full_caption)
+        except Exception as e:
+            if not retry_failed:
+                await self.persistence.add_failed_screenshot(screenshot.to_dict())
+            else:
+                await self.persistence.add_failed_screenshot(screenshot.to_dict())
+            logger.error("bot.publish_failed",
+                         error=str(e),
+                         game=screenshot.game_name or "Unknown")
+            return False
 
         # Persist
         await self.persistence.mark_posted(screenshot.page_url)
@@ -225,13 +276,29 @@ def _print_banner():
     ))
 
 
-async def _cmd_post(bot: SteamInstagramBot):
-    success = await bot.execute_posting()
+async def _cmd_post(bot: SteamInstagramBot, retry_failed: bool = False):
+    success = await bot.execute_posting(retry_failed=retry_failed)
     if success:
         method = bot.publisher.last_publish_method or "unknown"
-        console.print(f"[green]Posted successfully using {method}.[/green]")
+        if retry_failed:
+            console.print(f"[green]Retried and posted successfully using {method}.[/green]")
+        else:
+            console.print(f"[green]Posted successfully using {method}.[/green]")
     else:
-        console.print("[red]❌ No screenshots available to post.[/red]")
+        if retry_failed:
+            console.print("[red]❌ No failed screenshots available or retry failed.[/red]")
+        else:
+            console.print("[red]❌ No screenshots available to post.[/red]")
+
+
+async def _cmd_retry_failed(bot: SteamInstagramBot):
+    console.print("[yellow]🔁 Retrying failed screenshot...[/yellow]")
+    success = await bot.execute_posting(retry_failed=True)
+    if success:
+        method = bot.publisher.last_publish_method or "unknown"
+        console.print(f"[green]Retried and posted successfully using {method}.[/green]")
+    else:
+        console.print("[red]❌ No failed screenshots available or retry failed.[/red]")
 
 
 async def _cmd_test(bot: SteamInstagramBot):
@@ -386,15 +453,20 @@ async def main():
     bot = SteamInstagramBot(settings)
     await bot.initialize()
 
-    command = sys.argv[1] if len(sys.argv) > 1 else "run"
+    args = sys.argv[1:]
+    command = args[0] if args else "run"
+    retry_failed = any(arg in {"--retry", "--retry-failed", "retry"} for arg in args[1:])
 
     commands = {
-        "post": lambda: _cmd_post(bot),
+        "post": lambda: _cmd_post(bot, retry_failed=retry_failed),
+        "retry-failed": lambda: _cmd_retry_failed(bot),
         "test": lambda: _cmd_test(bot),
         "test-vision": lambda: _cmd_test_vision(bot),
         "status": lambda: _cmd_status(bot),
         "reset-history": lambda: bot.persistence.reset_posted(),
         "reset-captions": lambda: bot.persistence.reset_captions(),
+        "reset-queue": lambda: bot.persistence.reset_scraped_queue(),
+        "reset-failed": lambda: bot.persistence.reset_failed_queue(),
         "clear-cache": lambda: asyncio.coroutine(lambda: bot.scraper.clear_cache())(),
         "run": lambda: bot.run_scheduled(),
     }
@@ -402,7 +474,8 @@ async def main():
     handler = commands.get(command)
     if handler is None:
         console.print(f"[red]Unknown command: {command}[/red]")
-        console.print("Commands: run, post, test, test-vision, status, reset-history, reset-captions, clear-cache")
+        console.print("Commands: run, post, retry-failed, test, test-vision, status, reset-history, reset-captions, reset-queue, reset-failed, clear-cache")
+        console.print("Flags: post --retry-failed")
         sys.exit(1)
 
     await handler()

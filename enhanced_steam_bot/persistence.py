@@ -25,6 +25,8 @@ class PersistenceManager:
 
         self.posted_screenshots: set[str] = set()
         self.caption_history: dict[str, int] = {}
+        self.scraped_queue: list[dict] = []
+        self.failed_queue: list[dict] = []
 
     # ── Bootstrap ────────────────────────────────────────────────────────
 
@@ -65,6 +67,8 @@ class PersistenceManager:
     async def _init_files(self) -> None:
         posted_path = self.data_dir / "posted_history.json"
         caption_path = self.data_dir / "caption_history.json"
+        queue_path = self.data_dir / "scraped_queue.json"
+        failed_path = self.data_dir / "failed_queue.json"
 
         if posted_path.exists():
             async with aiofiles.open(posted_path, "r") as f:
@@ -74,9 +78,25 @@ class PersistenceManager:
             async with aiofiles.open(caption_path, "r") as f:
                 self.caption_history = json.loads(await f.read())
 
+        if queue_path.exists():
+            async with aiofiles.open(queue_path, "r") as f:
+                self.scraped_queue = json.loads(await f.read())
+
+        if failed_path.exists():
+            async with aiofiles.open(failed_path, "r") as f:
+                self.failed_queue = json.loads(await f.read())
+
+        if self._prune_scraped_queue(self.posted_screenshots):
+            await self._save_scraped_queue_file()
+
+        if self._prune_failed_queue(self.posted_screenshots):
+            await self._save_failed_queue_file()
+
         logger.info("persistence.files.loaded",
                     posted=len(self.posted_screenshots),
-                    patterns=len(self.caption_history))
+                    patterns=len(self.caption_history),
+                    scraped_queue=len(self.scraped_queue),
+                    failed_queue=len(self.failed_queue))
 
     # ── Mutations ────────────────────────────────────────────────────────
 
@@ -120,6 +140,67 @@ class PersistenceManager:
             reverse=True,
         )[:10]
 
+    async def get_cached_screenshot(self, posted: set[str]) -> Optional[dict]:
+        if self._prune_scraped_queue(posted):
+            await self._save_scraped_queue_file()
+        return self.scraped_queue[0] if self.scraped_queue else None
+
+    async def pop_cached_screenshot(self, posted: set[str]) -> Optional[dict]:
+        if self._prune_scraped_queue(posted):
+            await self._save_scraped_queue_file()
+        if not self.scraped_queue:
+            return None
+        screenshot = self.scraped_queue.pop(0)
+        await self._save_scraped_queue_file()
+        return screenshot
+
+    async def replace_scraped_queue(self, screenshots: list[dict]) -> None:
+        self.scraped_queue = list(screenshots)
+        await self._save_scraped_queue_file()
+
+    async def get_failed_screenshot(self, posted: set[str]) -> Optional[dict]:
+        if self._prune_failed_queue(posted):
+            await self._save_failed_queue_file()
+        return self.failed_queue[0] if self.failed_queue else None
+
+    async def pop_failed_screenshot(self, posted: set[str]) -> Optional[dict]:
+        if self._prune_failed_queue(posted):
+            await self._save_failed_queue_file()
+        if not self.failed_queue:
+            return None
+        screenshot = self.failed_queue.pop(0)
+        await self._save_failed_queue_file()
+        return screenshot
+
+    async def add_failed_screenshot(self, screenshot: dict) -> None:
+        page_url = screenshot.get("page_url")
+        if not page_url:
+            return
+        if any(item.get("page_url") == page_url for item in self.failed_queue):
+            return
+        self.failed_queue.append(screenshot)
+        await self._save_failed_queue_file()
+
+    async def consume_scraped_screenshot(self, url: str) -> None:
+        filtered = [item for item in self.scraped_queue if item.get("page_url") != url]
+        if len(filtered) != len(self.scraped_queue):
+            self.scraped_queue = filtered
+            await self._save_scraped_queue_file()
+
+    def _prune_scraped_queue(self, posted: set[str]) -> bool:
+        filtered = [item for item in self.scraped_queue if item.get("page_url") not in posted]
+        if len(filtered) != len(self.scraped_queue):
+            self.scraped_queue = filtered
+            return True
+        return False
+
+    def _prune_failed_queue(self, posted: set[str]) -> bool:
+        filtered = [item for item in self.failed_queue if item.get("page_url") not in posted]
+        if len(filtered) != len(self.failed_queue):
+            self.failed_queue = filtered
+            return True
+        return False
+
     # ── File persistence helpers ─────────────────────────────────────────
 
     async def _save_posted_file(self) -> None:
@@ -131,6 +212,16 @@ class PersistenceManager:
         path = self.data_dir / "caption_history.json"
         async with aiofiles.open(path, "w") as f:
             await f.write(json.dumps(self.caption_history, indent=2))
+
+    async def _save_scraped_queue_file(self) -> None:
+        path = self.data_dir / "scraped_queue.json"
+        async with aiofiles.open(path, "w") as f:
+            await f.write(json.dumps(self.scraped_queue, indent=2))
+
+    async def _save_failed_queue_file(self) -> None:
+        path = self.data_dir / "failed_queue.json"
+        async with aiofiles.open(path, "w") as f:
+            await f.write(json.dumps(self.failed_queue, indent=2))
 
     # ── Admin ────────────────────────────────────────────────────────────
 
@@ -159,3 +250,13 @@ class PersistenceManager:
         else:
             await self._save_caption_file()
         logger.info("persistence.captions.reset")
+
+    async def reset_scraped_queue(self) -> None:
+        self.scraped_queue.clear()
+        await self._save_scraped_queue_file()
+        logger.info("persistence.scraped_queue.reset")
+
+    async def reset_failed_queue(self) -> None:
+        self.failed_queue.clear()
+        await self._save_failed_queue_file()
+        logger.info("persistence.failed_queue.reset")
