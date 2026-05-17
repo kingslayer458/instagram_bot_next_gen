@@ -51,6 +51,16 @@ class PersistenceManager:
                     use_count INTEGER DEFAULT 1,
                     updated   TIMESTAMPTZ DEFAULT now()
                 );
+                CREATE TABLE IF NOT EXISTS scraped_queue (
+                    page_url    VARCHAR(500) PRIMARY KEY,
+                    payload     JSONB NOT NULL,
+                    queued_at   TIMESTAMPTZ DEFAULT now()
+                );
+                CREATE TABLE IF NOT EXISTS failed_queue (
+                    page_url    VARCHAR(500) PRIMARY KEY,
+                    payload     JSONB NOT NULL,
+                    queued_at   TIMESTAMPTZ DEFAULT now()
+                );
             """)
             rows = await conn.fetch("SELECT screenshot_url FROM posted_screenshots")
             self.posted_screenshots = {r["screenshot_url"] for r in rows}
@@ -58,9 +68,19 @@ class PersistenceManager:
             rows = await conn.fetch("SELECT pattern, use_count FROM caption_history")
             self.caption_history = {r["pattern"]: r["use_count"] for r in rows}
 
+            rows = await conn.fetch("SELECT payload FROM scraped_queue ORDER BY queued_at ASC, page_url ASC")
+            self.scraped_queue = [self._coerce_payload(r["payload"]) for r in rows]
+
+            rows = await conn.fetch("SELECT payload FROM failed_queue ORDER BY queued_at ASC, page_url ASC")
+            self.failed_queue = [self._coerce_payload(r["payload"]) for r in rows]
+
+            await self._prune_postgres_queues(conn)
+
             logger.info("persistence.postgres.loaded",
                         posted=len(self.posted_screenshots),
-                        patterns=len(self.caption_history))
+                        patterns=len(self.caption_history),
+                        scraped_queue=len(self.scraped_queue),
+                        failed_queue=len(self.failed_queue))
         finally:
             await conn.close()
 
@@ -103,6 +123,48 @@ class PersistenceManager:
     def is_posted(self, url: str) -> bool:
         return url in self.posted_screenshots
 
+    @staticmethod
+    def _coerce_payload(payload) -> dict:
+        if isinstance(payload, dict):
+            return payload
+        if isinstance(payload, str):
+            return json.loads(payload)
+        return dict(payload)
+
+    async def _prune_postgres_queues(self, conn) -> bool:
+        pruned_scraped = self._prune_scraped_queue(self.posted_screenshots)
+        pruned_failed = self._prune_failed_queue(self.posted_screenshots)
+
+        if pruned_scraped:
+            await self._write_queue_rows(conn, "scraped_queue", self.scraped_queue)
+        if pruned_failed:
+            await self._write_queue_rows(conn, "failed_queue", self.failed_queue)
+        return pruned_scraped or pruned_failed
+
+    async def _fetch_queue_rows(self, table_name: str) -> list[dict]:
+        if not self.database_url:
+            return []
+        import asyncpg
+
+        conn = await asyncpg.connect(self.database_url)
+        try:
+            rows = await conn.fetch(f"SELECT payload FROM {table_name} ORDER BY queued_at ASC, page_url ASC")
+            return [dict(r["payload"]) for r in rows]
+        finally:
+            await conn.close()
+
+    async def _write_queue_rows(self, conn, table_name: str, screenshots: list[dict]) -> None:
+        await conn.execute(f"DELETE FROM {table_name}")
+        for screenshot in screenshots:
+            page_url = screenshot.get("page_url")
+            if not page_url:
+                continue
+            await conn.execute(
+                f"INSERT INTO {table_name} (page_url, payload) VALUES ($1, $2::jsonb) ON CONFLICT (page_url) DO UPDATE SET payload = EXCLUDED.payload, queued_at = now()",
+                page_url,
+                json.dumps(screenshot),
+            )
+
     async def mark_posted(self, url: str) -> None:
         self.posted_screenshots.add(url)
         if self.database_url:
@@ -141,11 +203,23 @@ class PersistenceManager:
         )[:10]
 
     async def get_cached_screenshot(self, posted: set[str]) -> Optional[dict]:
+        if self.database_url:
+            if self._prune_scraped_queue(posted):
+                await self._sync_scraped_queue_postgres()
+            return self.scraped_queue[0] if self.scraped_queue else None
         if self._prune_scraped_queue(posted):
             await self._save_scraped_queue_file()
         return self.scraped_queue[0] if self.scraped_queue else None
 
     async def pop_cached_screenshot(self, posted: set[str]) -> Optional[dict]:
+        if self.database_url:
+            if self._prune_scraped_queue(posted):
+                await self._sync_scraped_queue_postgres()
+            if not self.scraped_queue:
+                return None
+            screenshot = self.scraped_queue.pop(0)
+            await self._sync_scraped_queue_postgres()
+            return screenshot
         if self._prune_scraped_queue(posted):
             await self._save_scraped_queue_file()
         if not self.scraped_queue:
@@ -156,14 +230,29 @@ class PersistenceManager:
 
     async def replace_scraped_queue(self, screenshots: list[dict]) -> None:
         self.scraped_queue = list(screenshots)
-        await self._save_scraped_queue_file()
+        if self.database_url:
+            await self._sync_scraped_queue_postgres()
+        else:
+            await self._save_scraped_queue_file()
 
     async def get_failed_screenshot(self, posted: set[str]) -> Optional[dict]:
+        if self.database_url:
+            if self._prune_failed_queue(posted):
+                await self._sync_failed_queue_postgres()
+            return self.failed_queue[0] if self.failed_queue else None
         if self._prune_failed_queue(posted):
             await self._save_failed_queue_file()
         return self.failed_queue[0] if self.failed_queue else None
 
     async def pop_failed_screenshot(self, posted: set[str]) -> Optional[dict]:
+        if self.database_url:
+            if self._prune_failed_queue(posted):
+                await self._sync_failed_queue_postgres()
+            if not self.failed_queue:
+                return None
+            screenshot = self.failed_queue.pop(0)
+            await self._sync_failed_queue_postgres()
+            return screenshot
         if self._prune_failed_queue(posted):
             await self._save_failed_queue_file()
         if not self.failed_queue:
@@ -179,13 +268,19 @@ class PersistenceManager:
         if any(item.get("page_url") == page_url for item in self.failed_queue):
             return
         self.failed_queue.append(screenshot)
-        await self._save_failed_queue_file()
+        if self.database_url:
+            await self._sync_failed_queue_postgres()
+        else:
+            await self._save_failed_queue_file()
 
     async def consume_scraped_screenshot(self, url: str) -> None:
         filtered = [item for item in self.scraped_queue if item.get("page_url") != url]
         if len(filtered) != len(self.scraped_queue):
             self.scraped_queue = filtered
-            await self._save_scraped_queue_file()
+            if self.database_url:
+                await self._sync_scraped_queue_postgres()
+            else:
+                await self._save_scraped_queue_file()
 
     def _prune_scraped_queue(self, posted: set[str]) -> bool:
         filtered = [item for item in self.scraped_queue if item.get("page_url") not in posted]
@@ -200,6 +295,28 @@ class PersistenceManager:
             self.failed_queue = filtered
             return True
         return False
+
+    async def _sync_scraped_queue_postgres(self) -> None:
+        if not self.database_url:
+            return
+        import asyncpg
+
+        conn = await asyncpg.connect(self.database_url)
+        try:
+            await self._write_queue_rows(conn, "scraped_queue", self.scraped_queue)
+        finally:
+            await conn.close()
+
+    async def _sync_failed_queue_postgres(self) -> None:
+        if not self.database_url:
+            return
+        import asyncpg
+
+        conn = await asyncpg.connect(self.database_url)
+        try:
+            await self._write_queue_rows(conn, "failed_queue", self.failed_queue)
+        finally:
+            await conn.close()
 
     # ── File persistence helpers ─────────────────────────────────────────
 
@@ -253,10 +370,16 @@ class PersistenceManager:
 
     async def reset_scraped_queue(self) -> None:
         self.scraped_queue.clear()
-        await self._save_scraped_queue_file()
+        if self.database_url:
+            await self._sync_scraped_queue_postgres()
+        else:
+            await self._save_scraped_queue_file()
         logger.info("persistence.scraped_queue.reset")
 
     async def reset_failed_queue(self) -> None:
         self.failed_queue.clear()
-        await self._save_failed_queue_file()
+        if self.database_url:
+            await self._sync_failed_queue_postgres()
+        else:
+            await self._save_failed_queue_file()
         logger.info("persistence.failed_queue.reset")

@@ -467,7 +467,7 @@ async def main():
         "reset-captions": lambda: bot.persistence.reset_captions(),
         "reset-queue": lambda: bot.persistence.reset_scraped_queue(),
         "reset-failed": lambda: bot.persistence.reset_failed_queue(),
-        "clear-cache": lambda: asyncio.coroutine(lambda: bot.scraper.clear_cache())(),
+        "clear-cache": lambda: bot.scraper.clear_cache(),
         "run": lambda: bot.run_scheduled(),
     }
 

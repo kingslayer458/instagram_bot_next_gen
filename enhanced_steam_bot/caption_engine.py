@@ -41,6 +41,12 @@ DAILY_THEMES = {
     6: {"name": "Screenshot Saturday", "hashtags": ["#screenshotsaturday", "#photomode", "#creative"]},
 }
 
+
+def _daily_theme() -> dict[str, list[str] | str]:
+    """Return the current theme using Python's Monday=0 weekday numbering."""
+    today = (datetime.now().weekday() + 1) % 7
+    return DAILY_THEMES.get(today, DAILY_THEMES[6])
+
 # ── Game → hashtag mapping ───────────────────────────────────────────────
 
 GAME_HASHTAGS: dict[str, list[str]] = {
@@ -140,8 +146,7 @@ class CaptionEngine:
         logger.info("caption.vision_start")
         image_b64 = await self._download_and_encode(screenshot.image_url)
 
-        today = datetime.now().weekday()
-        theme = DAILY_THEMES.get(today, DAILY_THEMES[6])
+        theme = _daily_theme()
         avoid = ", ".join(self.overused_patterns[:10]) if self.overused_patterns else "none"
 
         prompt = f"""Analyze this gaming screenshot and return a JSON object with these fields:
@@ -291,8 +296,7 @@ Reply with ONLY the number (e.g., "2"). Nothing else."""
     # ── Text-only AI caption ─────────────────────────────────────────────
 
     async def _generate_text_ai_caption(self, screenshot: Screenshot, vision: Optional[VisionAnalysis] = None) -> str:
-        today = datetime.now().weekday()
-        theme = DAILY_THEMES.get(today, DAILY_THEMES[6])
+        theme = _daily_theme()
 
         vision_context = ""
         if vision:
@@ -417,8 +421,7 @@ Write the caption now:"""
     # ── Static fallback ──────────────────────────────────────────────────
 
     def _generate_static_caption(self, screenshot: Screenshot) -> str:
-        today = datetime.now().weekday()
-        theme = DAILY_THEMES.get(today, DAILY_THEMES[6])
+        theme = _daily_theme()
         game = screenshot.game_name or "this game"
 
         templates = [
@@ -454,8 +457,7 @@ Write the caption now:"""
                     break
 
         # Daily theme
-        today = datetime.now().weekday()
-        theme = DAILY_THEMES.get(today, DAILY_THEMES[6])
+        theme = _daily_theme()
         for t in theme["hashtags"]:
             tags.add(t)
 
