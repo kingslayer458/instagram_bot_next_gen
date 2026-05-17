@@ -1,15 +1,15 @@
 docker compose up -d        # start in background
 docker compose logs -f      # follow logs
-docker compose run bot post # single post
-docker compose run bot post --retry-failed # retry one failed item manually
+docker compose run --rm bot post # single post
+docker compose run --rm bot post --retry-failed # retry one failed item manually
 
-docker compose run bot test  # Dry-run test
-docker compose run bot test-vision 
-docker compose run bot status
-docker compose run bot reset-history
-docker compose run bot reset-captions
-docker compose run bot reset-queue
-docker compose run bot reset-failed
+docker compose run --rm bot test  # Dry-run test
+docker compose run --rm bot test-vision
+docker compose run --rm bot status
+docker compose run --rm bot reset-history
+docker compose run --rm bot reset-captions
+docker compose run --rm bot reset-queue
+docker compose run --rm bot reset-failed
 mkdir -p ~/backups
 
 Queue behavior:
