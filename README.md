@@ -15,7 +15,7 @@ This document explains:
 At a high level, the bot performs one posting cycle like this:
 
 1. Read configuration from `.env`
-2. Load posting history and caption history
+2. Load posting history, caption history, and queue state
 3. Scrape screenshots from one or more Steam profiles
 4. Filter out already-posted screenshots
 5. Score the remaining screenshots and select the best one
@@ -39,6 +39,16 @@ The project is fully async and is designed to run either:
 - Cron-based scheduling through APScheduler
 - Structured logs for easier debugging
 
+### What's new in this version
+
+- Queue-backed posting so scraped screenshots are reused instead of scraped repeatedly
+- Separate failed queue for publish failures, with manual retry support via `post --retry-failed`
+- Queue reset commands for scraped and failed items
+- PostgreSQL support for the new queue tables, alongside the existing history storage
+- Calendar-correct daily theme selection in caption generation and hashtag building
+- One-off Docker commands documented with automatic container cleanup using `--rm`
+- A small PowerShell launcher (`bot.ps1`) that wraps one-off Compose commands with `--rm`
+
 ## 3. Project structure
 
 ```text
@@ -55,7 +65,9 @@ enhanced_steam_bot/
 
 data/
 ├── caption_history.json
-└── posted_history.json
+├── failed_queue.json
+├── posted_history.json
+└── scraped_queue.json
 ```
 
 ## 4. How it works internally
@@ -181,11 +193,15 @@ By default the bot uses JSON files in `data/`:
 
 - `posted_history.json`
 - `caption_history.json`
+- `scraped_queue.json`
+- `failed_queue.json`
 
 This allows the bot to remember:
 
 - which screenshots have already been posted
 - which caption styles or patterns were used recently
+- which screenshots were already scraped and are waiting to be posted
+- which screenshots failed publishing and are waiting for manual retry
 
 If `DATABASE_URL` is configured, PostgreSQL can be used instead.
 
