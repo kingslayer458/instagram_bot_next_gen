@@ -17,3 +17,8 @@ Queue behavior:
 - failed_queue.json stores screenshots that failed during publish.
 - normal post runs consume from scraped_queue first.
 - if publish fails, the item moves into failed_queue for manual retry.
+
+
+debug
+
+curl -s http://localhost:4000/health | jq 
