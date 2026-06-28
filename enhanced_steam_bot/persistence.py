@@ -383,3 +383,25 @@ class PersistenceManager:
         else:
             await self._save_failed_queue_file()
         logger.info("persistence.failed_queue.reset")
+
+    async def move_failed_to_scraped(self) -> int:
+        """Move all items from failed_queue back to scraped_queue for retry.
+        Returns the number of items moved.
+        """
+        if not self.failed_queue:
+            logger.info("persistence.move_failed_to_scraped", moved_count=0, reason="failed_queue_empty")
+            return 0
+
+        moved_count = len(self.failed_queue)
+        self.scraped_queue.extend(self.failed_queue)
+        self.failed_queue.clear()
+
+        if self.database_url:
+            await self._sync_scraped_queue_postgres()
+            await self._sync_failed_queue_postgres()
+        else:
+            await self._save_scraped_queue_file()
+            await self._save_failed_queue_file()
+
+        logger.info("persistence.move_failed_to_scraped", moved_count=moved_count)
+        return moved_count

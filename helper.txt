@@ -2,6 +2,7 @@ docker compose up -d        # start in background
 docker compose logs -f      # follow logs
 docker compose run --rm bot post # single post
 docker compose run --rm bot post --retry-failed # retry one failed item manually
+docker compose run --rm bot move-failed-scraped # move ALL failed items back to scrapped queue
 
 docker compose run --rm bot test  # Dry-run test
 docker compose run --rm bot test-vision
@@ -17,7 +18,7 @@ Queue behavior:
 - failed_queue.json stores screenshots that failed during publish.
 - normal post runs consume from scraped_queue first.
 - if publish fails, the item moves into failed_queue for manual retry.
-
+- move-failed-scraped bulk-recovers all failed items by moving them back to scraped_queue.
 
 debug
 

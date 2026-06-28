@@ -446,6 +446,25 @@ async def _cmd_status(bot: SteamInstagramBot):
     console.print(table)
 
 
+async def _cmd_move_failed_scraped(bot: SteamInstagramBot):
+    """Move all failed screenshots back to scraped queue for retry."""
+    current_failed = len(bot.persistence.failed_queue)
+    if current_failed == 0:
+        console.print("[yellow] No failed screenshots to recover.[/yellow]")
+        return
+
+    console.print(f"[yellow] Moving {current_failed} failed screenshot(s) back to scraped queue...[/yellow]")
+    moved = await bot.persistence.move_failed_to_scraped()
+
+    if moved > 0:
+        console.print(f"[green] Successfully moved {moved} item(s) from failed_queue → scraped_queue.[/green]")
+        new_status = bot.get_status()
+        console.print(f"[dim]Scraped queue size: {new_status['scraped_queue']}[/dim]")
+        console.print(f"[dim]Failed queue size: {new_status['failed_queue']}[/dim]")
+    else:
+        console.print("[red] No items were moved.[/red]")
+
+
 async def main():
     _print_banner()
 
@@ -463,6 +482,7 @@ async def main():
         "test": lambda: _cmd_test(bot),
         "test-vision": lambda: _cmd_test_vision(bot),
         "status": lambda: _cmd_status(bot),
+        "move-failed-scraped": lambda: _cmd_move_failed_scraped(bot),
         "reset-history": lambda: bot.persistence.reset_posted(),
         "reset-captions": lambda: bot.persistence.reset_captions(),
         "reset-queue": lambda: bot.persistence.reset_scraped_queue(),
@@ -474,7 +494,7 @@ async def main():
     handler = commands.get(command)
     if handler is None:
         console.print(f"[red]Unknown command: {command}[/red]")
-        console.print("Commands: run, post, retry-failed, test, test-vision, status, reset-history, reset-captions, reset-queue, reset-failed, clear-cache")
+        console.print("Commands: run, post, retry-failed, test, test-vision, status, move-failed-scraped, reset-history, reset-captions, reset-queue, reset-failed, clear-cache")
         console.print("Flags: post --retry-failed")
         sys.exit(1)
 
