@@ -160,5 +160,23 @@
       "Golden Yellow"
     ],
     "scene_description": "A lone figure on horseback rides through a dense, lush forest path, illuminated by shafts of sunlight piercing the canopy above."
+  },
+  {
+    "page_url": "https://steamcommunity.com/sharedfiles/filedetails/?id=1891667059",
+    "image_url": "https://images.steamusercontent.com/ugc/770604817009486248/069182D1970FF45628A6E299A70067213987F437/?imw=5000&imh=5000&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false",
+    "quality_estimate": "Ultra High Quality",
+    "title": "Screenshot",
+    "game_name": "Tom Clancy's The Division",
+    "steam_user": "76561198062551874",
+    "extracted_at": "2026-05-18T00:06:28.949841+00:00",
+    "original_url": "https://images.steamusercontent.com/ugc/770604817009486248/069182D1970FF45628A6E299A70067213987F437/?imw=5000&imh=5000&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false",
+    "score": 38.0,
+    "mood": "Ethereal",
+    "dominant_colors": [
+      "Misty Yellow",
+      "Forest Green",
+      "Dark Grey"
+    ],
+    "scene_description": "Sunlight filters through a dense morning haze over a tranquil canal, illuminating a distant bridge and overgrown foliage along the urban riverbanks."
   }
 ]
