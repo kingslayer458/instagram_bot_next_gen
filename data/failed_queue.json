@@ -196,5 +196,23 @@
       "Red"
     ],
     "scene_description": "A lone figure walks down a misty, futuristic botanical pathway beneath a vast, curved glass ceiling draped with lush green vines, past rows of red flowers and strange metallic planters."
+  },
+  {
+    "page_url": "https://steamcommunity.com/sharedfiles/filedetails/?id=1428443685",
+    "image_url": "https://images.steamusercontent.com/ugc/957461452972128931/C3292C30D187D35E96EA7F37F659CBF78C18E643/?imw=5000&imh=5000&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false",
+    "quality_estimate": "Ultra High Quality",
+    "title": "Screenshot",
+    "game_name": "Tom Clancy's The Division",
+    "steam_user": "76561198062551874",
+    "extracted_at": "2026-05-18T00:06:31.573595+00:00",
+    "original_url": "https://images.steamusercontent.com/ugc/957461452972128931/C3292C30D187D35E96EA7F37F659CBF78C18E643/?imw=5000&imh=5000&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false",
+    "score": 38.0,
+    "mood": "Mysterious",
+    "dominant_colors": [
+      "Dark Slate Gray",
+      "White",
+      "Dim Gray"
+    ],
+    "scene_description": "A lone agent walks down a snow-dusted, post-apocalyptic city street adorned with glowing Christmas snowflake lights, disappearing into the foggy distance amidst abandoned vehicles."
   }
 ]
